@@ -166,7 +166,7 @@
   const tabs=document.getElementById("tabs"),boards=document.getElementById("boards"),modal=document.getElementById("modal");
 
   // ---------- GitHub API ----------
-  // Setores fixos
+  // setores fixos
 let setores = [
   "Feijão","Beneficiamento Arroz","Armazenagem",
   "Empacotamento Arroz","Empacotamento Feijão","Ensaque Pet",
@@ -174,44 +174,39 @@ let setores = [
   "Utilidades","Caldeira","Predial","Compras de Materiais"
 ];
 
-let tasks = {};          // dados que vêm do JSON no GitHub
-let currentSetor = setores[0];
-let editIndex = null;
-let sha = "";            // hash do arquivo no GitHub
+let tasks = {};
+let sha = "";
 
-const tabs  = document.getElementById("tabs"),
-      boards = document.getElementById("boards"),
-      modal  = document.getElementById("modal");
+// 👉 Primeiro: inicializa SEMPRE com setores locais
+setores.forEach(s => tasks[s] = []);
 
-// -------- GitHub API --------
-
-// 👉 Função para carregar dados do GitHub
+// 👉 Depois: tenta carregar dados do GitHub (se falhar, mantém os locais)
 async function loadData() {
   try {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO}/contents/${FILE_PATH}`, {
       headers: { Authorization: `token ${TOKEN}` }
     });
 
-    if (!res.ok) throw new Error("Erro ao buscar JSON no GitHub");
+    if (res.ok) {
+      const data = await res.json();
+      sha = data.sha;
+      let remote = JSON.parse(atob(data.content));
 
-    const data = await res.json();
-    sha = data.sha; // necessário para atualizar depois
-    tasks = JSON.parse(atob(data.content));
-
-    // ⚡ Fallback: se o JSON remoto estiver vazio, inicializa com setores locais
-    if (!tasks || Object.keys(tasks).length === 0) {
-      setores.forEach(s => tasks[s] = []);
+      // se o JSON remoto tem dados, substitui
+      if (remote && Object.keys(remote).length > 0) {
+        tasks = remote;
+      }
     }
-
-    renderBoards(); // chama função que desenha os setores na tela
   } catch (err) {
-    console.error("Erro carregando dados:", err);
-
-    // Em caso de erro, também inicializa com os setores locais
-    setores.forEach(s => tasks[s] = []);
-    renderBoards();
+    console.error("Erro ao carregar do GitHub:", err);
   }
+
+  // 👉 Sempre desenha os quadros no final
+  renderBoards();
 }
+
+// 👉 Chama ao carregar a página
+window.onload = loadData;
 
     
     
