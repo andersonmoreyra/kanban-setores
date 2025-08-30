@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Kanban por Setores (GitHub Cloud)</title>
+  <style>
+    :root {
+      --bg-light: #f4f6f9;
+      --bg-dark: #1e1f26;
+      --card-light: #fff;
+      --card-dark: #2b2d3a;
+      --text-light: #333;
+      --text-dark: #f0f0f0;
+      --primary: #4a90e2;
+      --danger: #d0021b;
+    }
+    body {margin:0;font-family:"Segoe UI",Roboto,sans-serif;
+      background:var(--bg-light);color:var(--text-light);}
+    body.dark{background:var(--bg-dark);color:var(--text-dark);}
+    header{padding:10px;background:var(--primary);color:#fff;text-align:center;}
+    header h1{margin:0;font-size:1.5rem;}
+    .tabs{display:flex;flex-wrap:wrap;background:#eee;padding:5px;gap:5px;justify-content:center;}
+    .tab{background:#ddd;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:0.9rem;}
+    .tab.active{background:var(--primary);color:#fff;font-weight:bold;}
+    .tab.add{background:#4caf50;color:#fff;font-weight:bold;}
+    .tab.danger{background:var(--danger);color:#fff;font-weight:bold;}
+    .top-controls{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap;}
+    .top-controls button{padding:6px 12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;}
+    .btn-primary{background:var(--primary);color:#fff;}
+    .btn-secondary{background:#555;color:#fff;}
+    .board{display:none;justify-content:space-around;gap:20px;padding:20px;}
+    .board.active{display:flex;}
+    .column{flex:1;min-width:200px;background:var(--card-light);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:10px;}
+    body.dark .column{background:var(--card-dark);}
+    .column h2{margin:0;padding:10px;text-align:center;border-bottom:1px solid #ddd;}
+    .task{background:#fafafa;padding:12px;border-radius:8px;cursor:grab;}
+    body.dark .task{background:#3a3c4a;}
+    .task h3{margin:0 0 5px;font-size:1rem;}
+    .task p{margin:0 0 5px;font-size:0.9rem;}
+    .task small{font-size:0.75rem;color:#777;}
+    .priority-low{border-left:6px solid #7ed957;}
+    .priority-medium{border-left:6px solid #f5a623;}
+    .priority-high{border-left:6px solid #d0021b;}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;justify-content:center;align-items:center;visibility:hidden;opacity:0;transition:0.3s;z-index:1000;}
+    .modal.active{visibility:visible;opacity:1;}
+    .modal-content{background:var(--card-light);padding:20px;border-radius:12px;width:90%;max-width:400px;}
+    body.dark .modal-content{background:var(--card-dark);}
+    .modal-content h2{margin-top:0;}
+    .modal-content input,.modal-content textarea,.modal-content select{width:100%;margin:8px 0;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:1rem;}
+    .modal-content button{margin-top:10px;padding:10px;width:100%;background:var(--primary);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:bold;}
+  </style>
+</head>
+<body>
+  <header><h1>📊 Kanban por Setores (GitHub Cloud)</h1></header>
+  <div class="tabs" id="tabs"></div>
+
+  <div class="top-controls">
+    <button class="btn-primary" onclick="openModal()">➕ Nova Tarefa</button>
+    <button class="btn-secondary" onclick="toggleTheme()">🌗 Tema</button>
+    <button class="btn-secondary" onclick="exportCSV()">📥 Exportar CSV</button>
+  </div>
+
+  <div id="boards"></div>
+
+  <!-- Modal de Tarefa -->
+  <div class="modal" id="modal">
+    <div class="modal-content">
+      <h2 id="modalTitle">Nova Tarefa</h2>
+      <input type="text" id="taskTitle" placeholder="Título" required/>
+      <textarea id="taskDesc" placeholder="Descrição"></textarea>
+      <select id="taskPriority">
+        <option value="low">Baixa</option>
+        <option value="medium">Média</option>
+        <option value="high">Alta</option>
+      </select>
+      <input type="number" id="taskImportance" min="1" max="5" placeholder="Importância (1-5)" required/>
+      <button onclick="saveTask()">Salvar</button>
+    </div>
+  </div>
+
+  <script>
+  // 🔧 CONFIGURAÇÃO GITHUB
+  const GITHUB_USER = "andersonmoreyra";   // 👈 seu usuário
+  const REPO = "kanban-setores";       // 👈 nome do repositório
+  const FILE_PATH = "kanban.json";     // arquivo para salvar os dados
+  const TOKEN = "SEU_TOKEN";           // 👈 seu token
+
+  let setores = ["Feijão","Beneficiamento Arroz","Armazenagem","Empacotamento Arroz","Empacotamento Feijão","Ensaque Pet","Extrusão Pet","Moagem Pet","Tombador Pet","Recebimento Pet","Utilidades","Caldeira","Predial","Compras de Materiais"];
+  let tasks = {};
+  let currentSetor = setores[0];
+  let editIndex = null;
+  let sha = ""; // hash do arquivo no GitHub
+
+  const tabs=document.getElementById("tabs"),boards=document.getElementById("boards"),modal=document.getElementById("modal");
+
+  // ---------- GitHub API ----------
+  async function loadFromGitHub() {
+    const url = `https://api.github.com/repos/${GITHUB_USER}/${REPO}/contents/${FILE_PATH}`;
+    const res = await fetch(url, { headers: { Authorization: `token ${TOKEN}` } });
+    const data = await res.json();
+    sha = data.sha;
+    const content = atob(data.content);
+    try { tasks = JSON.parse(content); } catch { tasks = {}; }
+    setores.forEach(s => { if(!tasks[s]) tasks[s] = [] });
+    renderTabs(); renderBoards(); initDragDrop();
+  }
+
+  async function saveToGitHub() {
+    const url = `https://api.github.com/repos/${GITHUB_USER}/${REPO}/contents/${FILE_PATH}`;
+    const content = btoa(JSON.stringify(tasks, null, 2));
+    const body = { message: "Atualização automática do Kanban", content: content, sha: sha };
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { Authorization: `token ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    sha = data.content.sha;
+  }
+
+  function saveLocal(){ saveToGitHub(); }
+
+  // ---------- Renderização ----------
+  function renderTabs(){
+    tabs.innerHTML="";
+    setores.forEach(s=>{
+      const tab=document.createElement("div");
+      tab.className="tab"+(s===currentSetor?" active":"");
+      if(s==="Compras de Materiais") tab.classList.add("danger");
+      tab.textContent=s;
+      tab.onclick=()=>switchSetor(s);
+      tabs.appendChild(tab);
+    });
+    const add=document.createElement("div");
+    add.className="tab add";add.textContent="➕ Novo Setor";
+    add.onclick=()=>alert("Adicionar setores via JSON/GitHub por enquanto");
+    tabs.appendChild(add);
+  }
+
+  function renderBoards(){
+    boards.innerHTML="";
+    const b=document.createElement("div");
+    b.className="board active"; b.dataset.setor=currentSetor;
+    b.innerHTML=`
+      <div class="column" data-status="todo"><h2>A Fazer</h2><div class="tasks"></div></div>
+      <div class="column" data-status="progress"><h2>Em Progresso</h2><div class="tasks"></div></div>
+      <div class="column" data-status="done"><h2>Concluído</h2><div class="tasks"></div></div>
+    `;
+    boards.appendChild(b);
+    renderTasks();
+  }
+
+  function renderTasks(){
+    const b=document.querySelector(`.board[data-setor="${currentSetor}"]`);
+    b.querySelectorAll(".tasks").forEach(c=>c.innerHTML="");
+    tasks[currentSetor].forEach((t,i)=>{
+      const div=document.createElement("div");
+      div.className=`task priority-${t.priority}`;div.draggable=true;
+      let created=new Date(t.createdAt).toLocaleDateString("pt-BR");
+      div.innerHTML=`<h3>${t.title}</h3><p>${t.description||""}</p>
+                     <small>📅 ${created} | 🔥 ${t.priority} | ⭐ ${t.importance}</small>`;
+      div.addEventListener("dragstart",()=>{div.classList.add("dragging");div.dataset.index=i;});
+      div.addEventListener("dragend",()=>div.classList.remove("dragging"));
+      b.querySelector(`.column[data-status="${t.status}"] .tasks`).appendChild(div);
+    });
+  }
+
+  function switchSetor(s){currentSetor=s;renderTabs();renderBoards();initDragDrop();}
+
+  // ---------- Modal ----------
+  function openModal(edit=false){
+    modal.classList.add("active");
+    if(!edit){editIndex=null;
+      document.getElementById("modalTitle").textContent="Nova Tarefa";
+      document.getElementById("taskTitle").value="";
+      document.getElementById("taskDesc").value="";
+      document.getElementById("taskPriority").value="low";
+      document.getElementById("taskImportance").value=1;
+    }
+  }
+  function closeModal(){modal.classList.remove("active");}
+  modal.addEventListener("click", e=>{if(e.target===modal) closeModal();});
+
+  function saveTask(){
+    const title=document.getElementById("taskTitle").value.trim();
+    const description=document.getElementById("taskDesc").value.trim();
+    const priority=document.getElementById("taskPriority").value;
+    const importance=document.getElementById("taskImportance").value;
+    if(!title) return alert("Título obrigatório!");
+    if(editIndex!==null){
+      tasks[currentSetor][editIndex]={...tasks[currentSetor][editIndex],title,description,priority,importance};
+    } else {
+      tasks[currentSetor].push({title,description,priority,importance,status:"todo",createdAt:new Date().toISOString()});
+    }
+    saveLocal();renderTasks();closeModal();
+  }
+
+  // ---------- Drag & Drop ----------
+  function initDragDrop(){
+    document.querySelectorAll(".column").forEach(col=>{
+      col.addEventListener("dragover", e=>{
+        e.preventDefault();
+        const d=document.querySelector(".dragging");
+        if(d) col.querySelector(".tasks").appendChild(d);
+      });
+      col.addEventListener("drop", e=>{
+        const d=document.querySelector(".dragging");
+        if(d){const idx=d.dataset.index;
+          tasks[currentSetor][idx].status=col.dataset.status;
+          saveLocal();renderTasks();initDragDrop();}
+      });
+    });
+  }
+
+  // ---------- Tema ----------
+  function toggleTheme(){document.body.classList.toggle("dark");}
+
+  // ---------- Export CSV ----------
+  function exportCSV() {
+    let rows=[["Setor","Título","Descrição","Prioridade","Importância","Status","Criada em"]];
+    setores.forEach(s=>{
+      tasks[s].forEach(t=>{
+        rows.push([
+          s,
+          t.title.replace(/,/g," "),
+          (t.description||"").replace(/,/g," "),
+          t.priority,
+          t.importance,
+          t.status,
+          new Date(t.createdAt).toLocaleString("pt-BR")
+        ]);
+      });
+    });
+    let csvContent = rows.map(e => e.join(",")).join("\n");
+    let blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    let url = URL.createObjectURL(blob);
+    let link = document.createElement("a");
+    link.href=url;link.download="kanban_setores.csv";
+    document.body.appendChild(link);link.click();
+    document.body.removeChild(link);
+  }
+
+  // ---------- Inicialização ----------
+  loadFromGitHub();
+  </script>
+</body>
+</html>
